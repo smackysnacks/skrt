@@ -69,6 +69,16 @@ impl Timestamp {
             + self.seconds as u64 * 1_000
             + self.milliseconds as u64
     }
+
+    pub fn shift_millis(&self, millis: i64) -> Result<Timestamp, &'static str> {
+        let t1 = self.to_millis() as i64;
+        let t2 = t1 + millis;
+        if t2 < 0 {
+            return Err("timestamp can't be negative");
+        }
+
+        Timestamp::from_millis(t2 as u64)
+    }
 }
 
 impl<'a> Srt<'a> {
@@ -303,5 +313,26 @@ nulla pariatur
         };
 
         assert_eq!(177428182, ts.to_millis());
+    }
+
+    #[test]
+    fn timestamp_shift_millis() {
+        let t1 = Timestamp::from_millis(12345).unwrap();
+
+        assert_eq!(12346, t1.shift_millis(1).unwrap().to_millis());
+        assert_eq!(12344, t1.shift_millis(-1).unwrap().to_millis());
+        assert_eq!(0, t1.shift_millis(-12345).unwrap().to_millis());
+        assert!(t1.shift_millis(-12346).is_err());
+        assert!(t1.shift_millis(9999999999999999).is_err());
+    }
+
+    #[test]
+    fn timestamp_ordering() {
+        assert!(Timestamp::from_millis(0) < Timestamp::from_millis(1));
+        assert!(Timestamp::from_millis(1) > Timestamp::from_millis(0));
+        assert!(Timestamp::from_millis(1) == Timestamp::from_millis(1));
+        assert!(Timestamp::from_millis(1234567) < Timestamp::from_millis(1234568));
+        assert!(Timestamp::from_millis(1234568) > Timestamp::from_millis(1234567));
+        assert!(Timestamp::from_millis(1234568) == Timestamp::from_millis(1234568));
     }
 }
