@@ -1,19 +1,44 @@
 use std::borrow::Cow;
 
-#[derive(Debug)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Srt<'a> {
     subtitles: Vec<Subtitle<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subtitle<'a> {
     seq: u32,
-    start_time: [u16; 4],
-    end_time: [u16; 4],
+    start: Timestamp,
+    end: Timestamp,
     text: Cow<'a, str>,
 }
 
-impl Srt<'_> {
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+pub struct Timestamp {
+    hours: u16,
+    minutes: u16,
+    seconds: u16,
+    milliseconds: u16,
+}
+
+impl<'a> Srt<'a> {
+    pub fn new() -> Srt<'a> {
+        Srt {
+            subtitles: Vec::new(),
+        }
+    }
+
+    pub fn add_subtitle(&mut self, start: Timestamp, end: Timestamp, text: Cow<'a, str>) {
+        let sub = Subtitle {
+            seq: self.subtitles.len() as u32 + 1,
+            start,
+            end,
+            text,
+        };
+
+        self.subtitles.push(sub);
+    }
+
     pub fn try_parse(mut srt: &str) -> Result<Srt<'_>, &'static str> {
         let mut subtitles = Vec::new();
 
@@ -77,8 +102,8 @@ impl Srt<'_> {
 
             subtitles.push(Subtitle {
                 seq,
-                start_time,
-                end_time,
+                start: start_time,
+                end: end_time,
                 text: text.into(),
             });
         }
@@ -87,7 +112,7 @@ impl Srt<'_> {
     }
 }
 
-fn parse_time(s: &str) -> Result<[u16; 4], &'static str> {
+fn parse_time(s: &str) -> Result<Timestamp, &'static str> {
     let b = s.as_bytes();
     if b.len() < 12 {
         return Err("not enough data");
@@ -109,14 +134,14 @@ fn parse_time(s: &str) -> Result<[u16; 4], &'static str> {
         return Err("invalid time");
     }
 
-    Ok([
-        (b[0] as u16 - b'0' as u16) * 10 + (b[1] as u16 - b'0' as u16),
-        (b[3] as u16 - b'0' as u16) * 10 + (b[4] as u16 - b'0' as u16),
-        (b[6] as u16 - b'0' as u16) * 10 + (b[7] as u16 - b'0' as u16),
-        (b[9] as u16 - b'0' as u16) * 100
+    Ok(Timestamp {
+        hours: (b[0] as u16 - b'0' as u16) * 10 + (b[1] as u16 - b'0' as u16),
+        minutes: (b[3] as u16 - b'0' as u16) * 10 + (b[4] as u16 - b'0' as u16),
+        seconds: (b[6] as u16 - b'0' as u16) * 10 + (b[7] as u16 - b'0' as u16),
+        milliseconds: (b[9] as u16 - b'0' as u16) * 100
             + (b[10] as u16 - b'0' as u16) * 10
             + (b[11] as u16 - b'0' as u16),
-    ])
+    })
 }
 
 fn newline_discard(s: &str) -> Result<usize, &'static str> {
@@ -149,7 +174,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
+    fn parse_srt() {
         let data = r#"1
 00:00:52,119 --> 00:00:56,658
 <i>Lorum ipsum dolor sit amet,
@@ -157,11 +182,11 @@ consectetur adipiscing elit,</i>
 sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
 
 2
-00:00:59,794 --> 00:01:03,430
+01:20:59,794 --> 02:01:03,430
 Ut enim ad minim veniam, quis
 
 3
-00:01:04,566 --> 00:01:05,667
+99:01:04,566 --> 99:01:05,667
 nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
 Duis aute irure dolor in reprehenderit in
 voluptate velit esse cillum
@@ -172,6 +197,17 @@ nulla pariatur
 
 "#;
 
-        let parsed = Srt::try_parse(data).unwrap();
+        let srt = Srt::try_parse(data).unwrap();
+
+        assert_eq!(3, srt.subtitles.len());
+        assert_eq!(
+            Timestamp {
+                hours: 1,
+                minutes: 20,
+                seconds: 59,
+                milliseconds: 794
+            },
+            srt.subtitles[1].start
+        );
     }
 }
