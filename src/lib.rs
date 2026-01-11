@@ -1,4 +1,8 @@
-use std::{borrow::Cow, cmp::Ordering};
+use std::{
+    borrow::Cow,
+    cmp::Ordering,
+    fmt::{Display, Write},
+};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Srt<'a> {
@@ -39,6 +43,16 @@ impl Ord for Timestamp {
 impl PartialOrd for Timestamp {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl Display for Timestamp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:02}:{:02}:{:02},{:03}",
+            self.hours, self.minutes, self.seconds, self.milliseconds
+        )
     }
 }
 
@@ -172,6 +186,18 @@ impl<'a> Srt<'a> {
 
         Ok(Srt { subtitles })
     }
+
+    pub fn serialize(&self) -> String {
+        let mut s = String::new();
+
+        for subtitle in &self.subtitles {
+            let _ = writeln!(&mut s, "{}", subtitle.seq);
+            let _ = writeln!(&mut s, "{} --> {}", subtitle.start, subtitle.end);
+            let _ = writeln!(&mut s, "{}\n", subtitle.text);
+        }
+
+        s
+    }
 }
 
 fn parse_time(s: &str) -> Result<Timestamp, &'static str> {
@@ -280,6 +306,8 @@ nulla pariatur
             },
             srt.subtitles[1].end
         );
+
+        assert_eq!(data, srt.serialize());
     }
 
     #[test]
@@ -334,5 +362,21 @@ nulla pariatur
         assert!(Timestamp::from_millis(1234567) < Timestamp::from_millis(1234568));
         assert!(Timestamp::from_millis(1234568) > Timestamp::from_millis(1234567));
         assert!(Timestamp::from_millis(1234568) == Timestamp::from_millis(1234568));
+    }
+
+    #[test]
+    fn timestamp_display() {
+        assert_eq!(
+            "00:00:00,000",
+            Timestamp::from_millis(0).unwrap().to_string()
+        );
+        assert_eq!(
+            "00:00:00,001",
+            Timestamp::from_millis(1).unwrap().to_string()
+        );
+        assert_eq!(
+            "49:17:08,182",
+            Timestamp::from_millis(177428182).unwrap().to_string()
+        );
     }
 }
