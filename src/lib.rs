@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, cmp::Ordering};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Srt<'a> {
@@ -21,7 +21,29 @@ pub struct Timestamp {
     milliseconds: u16,
 }
 
+impl Ord for Timestamp {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let a = self.hours as u64 * 3_600_000
+            + self.minutes as u64 * 60_000
+            + self.seconds as u64 * 1_000
+            + self.milliseconds as u64;
+        let b = other.hours as u64 * 3_600_000
+            + other.minutes as u64 * 60_000
+            + other.seconds as u64 * 1_000
+            + other.milliseconds as u64;
+
+        a.cmp(&b)
+    }
+}
+
+impl PartialOrd for Timestamp {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl<'a> Srt<'a> {
+    /// Construct an empty `Srt`.
     pub fn new() -> Srt<'a> {
         Srt {
             subtitles: Vec::new(),
@@ -39,6 +61,7 @@ impl<'a> Srt<'a> {
         self.subtitles.push(sub);
     }
 
+    /// Parses an `Srt`.
     pub fn try_parse(mut srt: &str) -> Result<Srt<'_>, &'static str> {
         let mut subtitles = Vec::new();
 
@@ -208,6 +231,15 @@ nulla pariatur
                 milliseconds: 794
             },
             srt.subtitles[1].start
+        );
+        assert_eq!(
+            Timestamp {
+                hours: 2,
+                minutes: 1,
+                seconds: 3,
+                milliseconds: 430
+            },
+            srt.subtitles[1].end
         );
     }
 }
