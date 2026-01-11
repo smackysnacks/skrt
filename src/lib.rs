@@ -42,6 +42,35 @@ impl PartialOrd for Timestamp {
     }
 }
 
+impl Timestamp {
+    pub fn from_millis(mut millis: u64) -> Result<Self, &'static str> {
+        let hours = millis / (3_600_000);
+        millis -= hours * 3_600_000;
+        let minutes = millis / (60_000);
+        millis -= minutes * 60_000;
+        let seconds = millis / 1_000;
+        millis -= seconds * 1_000;
+
+        if hours > 99 {
+            return Err("timestamp out of range");
+        }
+
+        Ok(Timestamp {
+            hours: hours as u16,
+            minutes: minutes as u16,
+            seconds: seconds as u16,
+            milliseconds: millis as u16,
+        })
+    }
+
+    pub fn to_millis(&self) -> u64 {
+        self.hours as u64 * 3_600_000
+            + self.minutes as u64 * 60_000
+            + self.seconds as u64 * 1_000
+            + self.milliseconds as u64
+    }
+}
+
 impl<'a> Srt<'a> {
     /// Construct an empty `Srt`.
     pub fn new() -> Srt<'a> {
@@ -241,5 +270,38 @@ nulla pariatur
             },
             srt.subtitles[1].end
         );
+    }
+
+    #[test]
+    fn timestamp_from_millis() {
+        let ts = Timestamp::from_millis(177428182).unwrap();
+
+        assert_eq!(
+            Timestamp {
+                hours: 49,
+                minutes: 17,
+                seconds: 8,
+                milliseconds: 182
+            },
+            ts
+        );
+    }
+
+    #[test]
+    fn timestamp_from_millis_overflow() {
+        let ts = Timestamp::from_millis(9999999999999999);
+        assert!(ts.is_err());
+    }
+
+    #[test]
+    fn timestamp_to_millis() {
+        let ts = Timestamp {
+            hours: 49,
+            minutes: 17,
+            seconds: 8,
+            milliseconds: 182,
+        };
+
+        assert_eq!(177428182, ts.to_millis());
     }
 }
