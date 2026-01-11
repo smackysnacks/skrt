@@ -118,6 +118,11 @@ impl<'a> Srt<'a> {
     pub fn try_parse(mut srt: &str) -> Result<Srt<'_>, &'static str> {
         let mut subtitles = Vec::new();
 
+        // strip optional UTF-8 BOM
+        if srt.starts_with("\u{feff}") {
+            srt = &srt[3..];
+        }
+
         while !srt.is_empty() {
             // sequence number
             let end = srt
