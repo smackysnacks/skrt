@@ -11,13 +11,13 @@ pub struct Srt<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subtitle<'a> {
-    seq: u32,
+    seq: usize,
     start: Timestamp,
     end: Timestamp,
     text: Cow<'a, str>,
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Timestamp {
     hours: u16,
     minutes: u16,
@@ -27,16 +27,7 @@ pub struct Timestamp {
 
 impl Ord for Timestamp {
     fn cmp(&self, other: &Self) -> Ordering {
-        let a = self.hours as u64 * 3_600_000
-            + self.minutes as u64 * 60_000
-            + self.seconds as u64 * 1_000
-            + self.milliseconds as u64;
-        let b = other.hours as u64 * 3_600_000
-            + other.minutes as u64 * 60_000
-            + other.seconds as u64 * 1_000
-            + other.milliseconds as u64;
-
-        a.cmp(&b)
+        self.to_millis().cmp(&other.to_millis())
     }
 }
 
@@ -105,7 +96,7 @@ impl<'a> Srt<'a> {
 
     pub fn add_subtitle(&mut self, start: Timestamp, end: Timestamp, text: Cow<'a, str>) {
         let sub = Subtitle {
-            seq: self.subtitles.len() as u32 + 1,
+            seq: self.subtitles.len() + 1,
             start,
             end,
             text,
@@ -128,7 +119,7 @@ impl<'a> Srt<'a> {
             let end = srt
                 .find(|c: char| !c.is_ascii_digit())
                 .ok_or("invalid sequence number")?;
-            let seq: u32 = srt[..end].parse().map_err(|_| "expected sequence number")?;
+            let seq = srt[..end].parse().map_err(|_| "expected sequence number")?;
             srt = &srt[end..];
             let discard = newline_discard(srt)?;
             srt = &srt[discard..];
@@ -190,6 +181,12 @@ impl<'a> Srt<'a> {
         }
 
         Ok(Srt { subtitles })
+    }
+
+    pub fn renumber(&mut self) {
+        for (i, sub) in self.subtitles.iter_mut().enumerate() {
+            sub.seq = i + 1;
+        }
     }
 
     pub fn serialize(&self) -> String {
@@ -361,12 +358,18 @@ nulla pariatur
 
     #[test]
     fn timestamp_ordering() {
-        assert!(Timestamp::from_millis(0) < Timestamp::from_millis(1));
-        assert!(Timestamp::from_millis(1) > Timestamp::from_millis(0));
-        assert!(Timestamp::from_millis(1) == Timestamp::from_millis(1));
-        assert!(Timestamp::from_millis(1234567) < Timestamp::from_millis(1234568));
-        assert!(Timestamp::from_millis(1234568) > Timestamp::from_millis(1234567));
-        assert!(Timestamp::from_millis(1234568) == Timestamp::from_millis(1234568));
+        assert!(Timestamp::from_millis(0).unwrap() < Timestamp::from_millis(1).unwrap());
+        assert!(Timestamp::from_millis(1).unwrap() > Timestamp::from_millis(0).unwrap());
+        assert!(Timestamp::from_millis(1).unwrap() == Timestamp::from_millis(1).unwrap());
+        assert!(
+            Timestamp::from_millis(1234567).unwrap() < Timestamp::from_millis(1234568).unwrap()
+        );
+        assert!(
+            Timestamp::from_millis(1234568).unwrap() > Timestamp::from_millis(1234567).unwrap()
+        );
+        assert!(
+            Timestamp::from_millis(1234568).unwrap() == Timestamp::from_millis(1234568).unwrap()
+        );
     }
 
     #[test]
