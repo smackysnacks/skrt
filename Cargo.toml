@@ -1,5 +1,5 @@
 [package]
-name = "subtitles"
+name = "skrt"
 version = "0.1.0"
 edition = "2024"
 authors = ["Mack Stump <mack@mackstump.com>"]

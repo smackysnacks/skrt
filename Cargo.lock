@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "subtitles"
+name = "skrt"
 version = "0.1.0"

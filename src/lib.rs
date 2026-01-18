@@ -1,3 +1,55 @@
+//! A library for parsing and manipulating SubRip Text (SRT) subtitle files.
+//!
+//! SRT is a simple, widely-supported subtitle format used by media players,
+//! video editors, and streaming platforms. Each subtitle entry consists of:
+//! - A sequential index number
+//! - A timestamp range (start --> end)
+//! - One or more lines of text
+//!
+//! # Example
+//!
+//! ```
+//! use skrt::{Srt, Timestamp};
+//!
+//! // Parse an existing SRT file
+//! let data = r#"1
+//! 00:00:01,000 --> 00:00:04,000
+//! Hello, world!
+//!
+//! 2
+//! 00:00:05,000 --> 00:00:08,000
+//! This is a subtitle.
+//!
+//! "#;
+//!
+//! let srt = Srt::try_parse(data).unwrap();
+//! assert_eq!(2, srt.subtitles().len());
+//!
+//! // Or build one programmatically
+//! let mut srt = Srt::new();
+//! srt.add_subtitle(
+//!     Timestamp::from_millis(1000).unwrap(),
+//!     Timestamp::from_millis(4000).unwrap(),
+//!     "Hello, world!".into(),
+//! );
+//!
+//! let output = srt.serialize();
+//! ```
+//!
+//! # Format Details
+//!
+//! This crate handles common SRT variations:
+//! - Both LF and CRLF line endings
+//! - Optional UTF-8 BOM at the start of the file
+//! - Trailing whitespace after timestamps
+//! - Files that don't end with a blank line
+//!
+//! Timestamps follow the format `HH:MM:SS,mmm` where:
+//! - `HH` = hours (00-99)
+//! - `MM` = minutes (00-59)
+//! - `SS` = seconds (00-59)
+//! - `mmm` = milliseconds (000-999)
+
 use std::{
     borrow::Cow,
     cmp::Ordering,
@@ -6,22 +58,83 @@ use std::{
 };
 
 /// Error type for SRT parsing and manipulation operations.
+///
+/// Errors that include a `position` field report the byte offset into the
+/// original input string where the error occurred. This is useful for
+/// displaying user-friendly error messages with location information.
+///
+/// # Example
+///
+/// ```
+/// use skrt::{Srt, SrtError};
+///
+/// let bad_input = "1\n00:XX:00,000 --> 00:00:01,000\nHello\n\n";
+/// let err = Srt::try_parse(bad_input).unwrap_err();
+///
+/// match err {
+///     SrtError::InvalidTimestamp { position } => {
+///         println!("Bad timestamp at byte {position}");
+///     }
+///     _ => {}
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SrtError {
     /// Input ended unexpectedly.
+    ///
+    /// Returned when the parser reaches the end of input while expecting
+    /// more data, such as a complete timestamp.
     UnexpectedEof,
+
     /// Invalid or missing sequence number.
-    InvalidSequenceNumber { position: usize },
-    /// Timestamp format is invalid (expected `HH:MM:SS,mmm`).
-    InvalidTimestamp { position: usize },
-    /// Timestamp value exceeds maximum representable range (99:59:59,999).
+    ///
+    /// Each subtitle block must begin with a positive integer sequence number.
+    /// This error is returned when the sequence number is missing, empty,
+    /// or contains non-digit characters.
+    InvalidSequenceNumber {
+        /// Byte offset where the invalid sequence number was found.
+        position: usize,
+    },
+
+    /// Timestamp format is invalid.
+    ///
+    /// Timestamps must follow the format `HH:MM:SS,mmm`. This error is
+    /// returned for malformed timestamps, invalid digit ranges (e.g.,
+    /// minutes > 59), or incorrect separators.
+    InvalidTimestamp {
+        /// Byte offset where the invalid timestamp begins.
+        position: usize,
+    },
+
+    /// Timestamp value exceeds the maximum representable range.
+    ///
+    /// The SRT format conventionally supports hours from 00-99, giving a
+    /// maximum timestamp of `99:59:59,999` (359,999,999 milliseconds).
     TimestampOutOfRange,
+
     /// Shift operation would result in a negative timestamp.
+    ///
+    /// Returned by [`Timestamp::shift_millis`] when the shift amount would
+    /// make the timestamp negative.
     NegativeTimestamp,
+
     /// Expected ` --> ` separator between timestamps.
-    ExpectedTimeSeparator { position: usize },
+    ///
+    /// The start and end timestamps must be separated by exactly ` --> `
+    /// (space, dash, dash, greater-than, space).
+    ExpectedTimeSeparator {
+        /// Byte offset where the separator was expected.
+        position: usize,
+    },
+
     /// Expected whitespace or newline character.
-    ExpectedNewline { position: usize },
+    ///
+    /// Returned when a newline was expected (e.g., after a timestamp line)
+    /// but other characters were found.
+    ExpectedNewline {
+        /// Byte offset where the newline was expected.
+        position: usize,
+    },
 }
 
 impl Display for SrtError {
@@ -55,11 +168,51 @@ impl Error for SrtError {}
 /// A convenient Result type alias for SRT operations.
 pub type Result<T> = std::result::Result<T, SrtError>;
 
+/// A collection of subtitles representing an SRT file.
+///
+/// `Srt` is the main type for working with subtitle data. You can either
+/// parse an existing SRT string with [`Srt::try_parse`] or build a new
+/// subtitle collection with [`Srt::new`] and [`Srt::add_subtitle`].
+///
+/// # Lifetime
+///
+/// The `'a` lifetime allows parsed subtitles to borrow text directly from
+/// the input string (zero-copy parsing). When building subtitles
+/// programmatically with owned `String` data, use `Srt<'static>`.
+///
+/// # Example
+///
+/// ```
+/// use skrt::{Srt, Timestamp};
+///
+/// let mut srt = Srt::new();
+///
+/// srt.add_subtitle(
+///     Timestamp::from_millis(0).unwrap(),
+///     Timestamp::from_millis(2000).unwrap(),
+///     "First subtitle&quot".into(),
+/// );
+///
+/// srt.add_subtitle(
+///     Timestamp::from_millis(2500).unwrap(),
+///     Timestamp::from_millis(5000).unwrap(),
+///     "Second subtitle".into(),
+/// );
+///
+/// println!("{}", srt.serialize());
+/// ```
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Srt<'a> {
     subtitles: Vec<Subtitle<'a>>,
 }
 
+/// A single subtitle entry.
+///
+/// Each subtitle has a sequence number, start and end timestamps, and text content. The text may
+/// contain multiple lines and can include basic HTML-like formatting tags (e.g., `<i>`, `<b>`)
+/// which are preserved as-is.
+///
+/// Subtitles are typically accessed through [`Srt::subtitles`] or [`Srt::iter`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subtitle<'a> {
     seq: usize,
@@ -68,6 +221,77 @@ pub struct Subtitle<'a> {
     text: Cow<'a, str>,
 }
 
+impl<'a> Subtitle<'a> {
+    /// Returns the sequence number of this subtitle.
+    ///
+    /// Sequence numbers start at 1 and increment for each subtitle, though parsed files may have
+    /// gaps or non-sequential numbering.
+    pub fn seq(&self) -> usize {
+        self.seq
+    }
+
+    /// Returns the start timestamp of this subtitle.
+    pub fn start(&self) -> Timestamp {
+        self.start
+    }
+
+    /// Returns the end timestamp of this subtitle.
+    pub fn end(&self) -> Timestamp {
+        self.end
+    }
+
+    /// Returns the text content of this subtitle.
+    ///
+    /// The text may contain newlines for multi-line subtitles and may
+    /// include formatting tags like `<i>` or `<b>`.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Sets the sequence number of this subtitle.
+    pub fn set_seq(&mut self, seq: usize) {
+        self.seq = seq;
+    }
+
+    /// Sets the start timestamp.
+    pub fn set_start(&mut self, start: Timestamp) {
+        self.start = start;
+    }
+
+    /// Sets the end timestamp.
+    pub fn set_end(&mut self, end: Timestamp) {
+        self.end = end;
+    }
+
+    /// Sets the subtitle text.
+    pub fn set_text(&mut self, text: Cow<'a, str>) {
+        self.text = text;
+    }
+}
+
+/// A timestamp representing a point in time within media.
+///
+/// Timestamps have millisecond precision and support a range from
+/// `00:00:00,000` to `99:59:59,999`.
+///
+/// # Display Format
+///
+/// When formatted with `Display`, timestamps use the standard SRT format:
+/// `HH:MM:SS,mmm` (e.g., `01:23:45,678`).
+///
+/// # Example
+///
+/// ```
+/// use skrt::Timestamp;
+///
+/// let ts = Timestamp::from_millis(5025000).unwrap(); // 1h 23m 45s
+/// assert_eq!("01:23:45,000", ts.to_string());
+/// assert_eq!(5025000, ts.to_millis());
+///
+/// // Shift the timestamp forward by 500ms
+/// let shifted = ts.shift_millis(500).unwrap();
+/// assert_eq!("01:23:45,500", shifted.to_string());
+/// ```
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Timestamp {
     hours: u16,
@@ -99,6 +323,21 @@ impl Display for Timestamp {
 }
 
 impl Timestamp {
+    /// Creates a new timestamp from a total number of milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SrtError::TimestampOutOfRange`] if `millis` exceeds
+    /// 359,999,999 (equivalent to `99:59:59,999`).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::Timestamp;
+    ///
+    /// let ts = Timestamp::from_millis(3661001).unwrap();
+    /// assert_eq!("01:01:01,001", ts.to_string());
+    /// ```
     pub fn from_millis(mut millis: u64) -> Result<Self> {
         let hours = millis / (3_600_000);
         millis -= hours * 3_600_000;
@@ -119,6 +358,16 @@ impl Timestamp {
         })
     }
 
+    /// Converts this timestamp to a total number of milliseconds.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::Timestamp;
+    ///
+    /// let ts = Timestamp::from_millis(12345).unwrap();
+    /// assert_eq!(12345, ts.to_millis());
+    /// ```
     pub fn to_millis(&self) -> u64 {
         self.hours as u64 * 3_600_000
             + self.minutes as u64 * 60_000
@@ -126,8 +375,36 @@ impl Timestamp {
             + self.milliseconds as u64
     }
 
+    /// Returns a new timestamp shifted by the given number of milliseconds.
+    ///
+    /// Positive values shift the timestamp forward (later in time), and
+    /// negative values shift it backward (earlier in time).
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`SrtError::NegativeTimestamp`] if the shift would result
+    ///   in a negative timestamp.
+    /// - Returns [`SrtError::TimestampOutOfRange`] if the shift would exceed
+    ///   the maximum timestamp value.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::Timestamp;
+    ///
+    /// let ts = Timestamp::from_millis(5000).unwrap();
+    ///
+    /// // Shift forward
+    /// let later = ts.shift_millis(1000).unwrap();
+    /// assert_eq!(6000, later.to_millis());
+    ///
+    /// // Shift backward
+    /// let earlier = ts.shift_millis(-2000).unwrap();
+    /// assert_eq!(3000, earlier.to_millis());
+    /// ```
     pub fn shift_millis(&self, millis: i64) -> Result<Timestamp> {
         let t1 = self.to_millis() as i64;
+        // TODO: check for underflow/overflow
         let t2 = t1 + millis;
         if t2 < 0 {
             return Err(SrtError::NegativeTimestamp);
@@ -138,13 +415,109 @@ impl Timestamp {
 }
 
 impl<'a> Srt<'a> {
-    /// Construct an empty `Srt`.
+    /// Constructs an empty `Srt` with no subtitles.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::Srt;
+    ///
+    /// let srt = Srt::new();
+    /// assert!(srt.subtitles().is_empty());
+    /// ```
     pub fn new() -> Srt<'a> {
         Srt {
             subtitles: Vec::new(),
         }
     }
 
+    /// Returns a slice of all subtitles.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::Srt;
+    ///
+    /// let data = "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n";
+    /// let srt = Srt::try_parse(data).unwrap();
+    ///
+    /// for sub in srt.subtitles() {
+    ///     println!("{}: {}", sub.start(), sub.text());
+    /// }
+    /// ```
+    pub fn subtitles(&self) -> &[Subtitle<'a>] {
+        &self.subtitles
+    }
+
+    /// Returns an iterator over the subtitles.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::Srt;
+    ///
+    /// let data = "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n2\n00:00:02,000 --> 00:00:03,000\nWorld\n\n";
+    /// let srt = Srt::try_parse(data).unwrap();
+    ///
+    /// let texts: Vec<_> = srt.iter().map(|s| s.text()).collect();
+    /// assert_eq!(vec!["Hello", "World"], texts);
+    /// ```
+    pub fn iter(&self) -> impl Iterator<Item = &Subtitle<'a>> {
+        self.subtitles.iter()
+    }
+
+    /// Returns a mutable iterator over the subtitles.
+    ///
+    /// This allows in-place modification of subtitles, such as adjusting
+    /// timestamps or updating text.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::{Srt, Timestamp};
+    ///
+    /// let data = "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n";
+    /// let mut srt = Srt::try_parse(data).unwrap();
+    ///
+    /// // Shift all subtitles forward by 5 seconds
+    /// for sub in srt.iter_mut() {
+    ///     sub.set_start(sub.start().shift_millis(5000).unwrap());
+    ///     sub.set_end(sub.end().shift_millis(5000).unwrap());
+    /// }
+    ///
+    /// assert_eq!(5000, srt.subtitles()[0].start().to_millis());
+    /// ```
+    pub fn iter_mut<'b>(&'b mut self) -> impl Iterator<Item = &'b mut Subtitle<'a>> {
+        self.subtitles.iter_mut()
+    }
+
+    /// Adds a new subtitle to the end of the collection.
+    ///
+    /// The sequence number is automatically assigned based on the current
+    /// number of subtitles (i.e., the new subtitle gets the next number
+    /// in sequence).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::{Srt, Timestamp};
+    ///
+    /// let mut srt = Srt::new();
+    ///
+    /// srt.add_subtitle(
+    ///     Timestamp::from_millis(0).unwrap(),
+    ///     Timestamp::from_millis(1000).unwrap(),
+    ///     "First".into(),
+    /// );
+    ///
+    /// srt.add_subtitle(
+    ///     Timestamp::from_millis(1000).unwrap(),
+    ///     Timestamp::from_millis(2000).unwrap(),
+    ///     "Second".into(),
+    /// );
+    ///
+    /// assert_eq!(2, srt.subtitles().len());
+    /// ```
     pub fn add_subtitle(&mut self, start: Timestamp, end: Timestamp, text: Cow<'a, str>) {
         let sub = Subtitle {
             seq: self.subtitles.len() + 1,
@@ -156,7 +529,37 @@ impl<'a> Srt<'a> {
         self.subtitles.push(sub);
     }
 
-    /// Parses an `Srt`.
+    /// Parses an SRT-formatted string.
+    ///
+    /// This performs zero-copy parsing where possible. Subtitle text is
+    /// borrowed directly from the input string.
+    ///
+    /// # Supported Variations
+    ///
+    /// - LF (`\n`) and CRLF (`\r\n`) line endings
+    /// - Optional UTF-8 BOM at the start
+    /// - Trailing whitespace after timestamp lines
+    /// - Missing final blank line
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`SrtError`] if the input is malformed. The error includes
+    /// position information for debugging.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::Srt;
+    ///
+    /// let data = r#"1
+    /// 00:00:01,000 --> 00:00:04,000
+    /// Hello!
+    ///
+    /// "#;
+    ///
+    /// let srt = Srt::try_parse(data).unwrap();
+    /// assert_eq!(1, srt.subtitles().len());
+    /// ```
     pub fn try_parse(mut srt: &str) -> Result<Srt<'_>> {
         let mut subtitles = Vec::new();
 
@@ -235,12 +638,55 @@ impl<'a> Srt<'a> {
         Ok(Srt { subtitles })
     }
 
+    /// Reassigns sequence numbers starting from 1.
+    ///
+    /// This is useful after modifying the subtitle list (e.g., removing
+    /// or reordering entries) to ensure sequence numbers are contiguous.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::{Srt, Timestamp};
+    ///
+    /// let mut srt = Srt::new();
+    /// srt.add_subtitle(
+    ///     Timestamp::from_millis(0).unwrap(),
+    ///     Timestamp::from_millis(1000).unwrap(),
+    ///     "Hello".into(),
+    /// );
+    ///
+    /// // After some modifications...
+    /// srt.resequence();
+    ///
+    /// assert_eq!(1, srt.subtitles()[0].seq());
+    /// ```
     pub fn resequence(&mut self) {
         for (i, sub) in self.subtitles.iter_mut().enumerate() {
             sub.seq = i + 1;
         }
     }
 
+    /// Serializes the subtitles to an SRT-formatted string.
+    ///
+    /// The output uses LF line endings. Each subtitle block is separated
+    /// by a blank line.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use skrt::{Srt, Timestamp};
+    ///
+    /// let mut srt = Srt::new();
+    /// srt.add_subtitle(
+    ///     Timestamp::from_millis(1000).unwrap(),
+    ///     Timestamp::from_millis(2000).unwrap(),
+    ///     "Hello, world!".into(),
+    /// );
+    ///
+    /// let output = srt.serialize();
+    /// assert!(output.contains("00:00:01,000 --> 00:00:02,000"));
+    /// assert!(output.contains("Hello, world!"));
+    /// ```
     pub fn serialize(&self) -> String {
         let mut s = String::new();
 
@@ -251,6 +697,32 @@ impl<'a> Srt<'a> {
         }
 
         s
+    }
+}
+
+/// Consuming iterator implementation for `Srt`.
+///
+/// This allows using `Srt` directly in a `for` loop, consuming the
+/// collection and yielding owned [`Subtitle`] values.
+///
+/// # Example
+///
+/// ```
+/// use skrt::Srt;
+///
+/// let data = "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n2\n00:00:02,000 --> 00:00:03,000\nWorld\n\n";
+/// let srt = Srt::try_parse(data).unwrap();
+///
+/// for subtitle in srt {
+///     println!("{}: {}", subtitle.seq(), subtitle.text());
+/// }
+/// ```
+impl<'a> IntoIterator for Srt<'a> {
+    type Item = Subtitle<'a>;
+    type IntoIter = std::vec::IntoIter<Subtitle<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.subtitles.into_iter()
     }
 }
 
