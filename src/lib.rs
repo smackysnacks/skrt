@@ -1,8 +1,59 @@
 use std::{
     borrow::Cow,
     cmp::Ordering,
-    fmt::{Display, Write},
+    error::Error,
+    fmt::{self, Display, Write},
 };
+
+/// Error type for SRT parsing and manipulation operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SrtError {
+    /// Input ended unexpectedly.
+    UnexpectedEof,
+    /// Invalid or missing sequence number.
+    InvalidSequenceNumber { position: usize },
+    /// Timestamp format is invalid (expected `HH:MM:SS,mmm`).
+    InvalidTimestamp { position: usize },
+    /// Timestamp value exceeds maximum representable range (99:59:59,999).
+    TimestampOutOfRange,
+    /// Shift operation would result in a negative timestamp.
+    NegativeTimestamp,
+    /// Expected ` --> ` separator between timestamps.
+    ExpectedTimeSeparator { position: usize },
+    /// Expected whitespace or newline character.
+    ExpectedNewline { position: usize },
+}
+
+impl Display for SrtError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SrtError::UnexpectedEof => write!(f, "unexpected end of input"),
+            SrtError::InvalidSequenceNumber { position } => {
+                write!(f, "invalid sequence number at byte {position}")
+            }
+            SrtError::InvalidTimestamp { position } => {
+                write!(f, "invalid timestamp at byte {position}")
+            }
+            SrtError::TimestampOutOfRange => {
+                write!(f, "timestamp exceeds maximum range (99:59:59,999)")
+            }
+            SrtError::NegativeTimestamp => {
+                write!(f, "operation would result in negative timestamp")
+            }
+            SrtError::ExpectedTimeSeparator { position } => {
+                write!(f, "expected ' --> ' at byte {position}")
+            }
+            SrtError::ExpectedNewline { position } => {
+                write!(f, "expected newline at byte {position}")
+            }
+        }
+    }
+}
+
+impl Error for SrtError {}
+
+/// A convenient Result type alias for SRT operations.
+pub type Result<T> = std::result::Result<T, SrtError>;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Srt<'a> {
@@ -48,7 +99,7 @@ impl Display for Timestamp {
 }
 
 impl Timestamp {
-    pub fn from_millis(mut millis: u64) -> Result<Self, &'static str> {
+    pub fn from_millis(mut millis: u64) -> Result<Self> {
         let hours = millis / (3_600_000);
         millis -= hours * 3_600_000;
         let minutes = millis / (60_000);
@@ -57,7 +108,7 @@ impl Timestamp {
         millis -= seconds * 1_000;
 
         if hours > 99 {
-            return Err("timestamp out of range");
+            return Err(SrtError::TimestampOutOfRange);
         }
 
         Ok(Timestamp {
@@ -75,11 +126,11 @@ impl Timestamp {
             + self.milliseconds as u64
     }
 
-    pub fn shift_millis(&self, millis: i64) -> Result<Timestamp, &'static str> {
+    pub fn shift_millis(&self, millis: i64) -> Result<Timestamp> {
         let t1 = self.to_millis() as i64;
         let t2 = t1 + millis;
         if t2 < 0 {
-            return Err("timestamp can't be negative");
+            return Err(SrtError::NegativeTimestamp);
         }
 
         Timestamp::from_millis(t2 as u64)
@@ -106,42 +157,43 @@ impl<'a> Srt<'a> {
     }
 
     /// Parses an `Srt`.
-    pub fn try_parse(mut srt: &str) -> Result<Srt<'_>, &'static str> {
+    pub fn try_parse(mut srt: &str) -> Result<Srt<'_>> {
         let mut subtitles = Vec::new();
 
-        // strip optional UTF-8 BOM
-        if srt.starts_with("\u{feff}") {
-            srt = &srt[3..];
-        }
+        let original = srt;
+        let pos = |remaining: &str| original.len() - remaining.len();
 
+        srt = strip_prefix_bom(srt);
         while !srt.is_empty() {
             // sequence number
             let end = srt
                 .find(|c: char| !c.is_ascii_digit())
-                .ok_or("invalid sequence number")?;
-            let seq = srt[..end].parse().map_err(|_| "expected sequence number")?;
+                .ok_or(SrtError::InvalidSequenceNumber { position: pos(srt) })?;
+            let seq = srt[..end]
+                .parse()
+                .map_err(|_| SrtError::InvalidSequenceNumber { position: pos(srt) })?;
             srt = &srt[end..];
-            let discard = newline_discard(srt)?;
+            let discard = newline_discard(srt, pos(srt))?;
             srt = &srt[discard..];
 
             // time start
-            let start_time = parse_time(srt)?;
+            let start_time = parse_time(srt, pos(srt))?;
             srt = &srt[12..];
 
             // time separator
             let b = srt.as_bytes();
             if b.len() < 5 {
-                return Err("not enough data");
+                return Err(SrtError::UnexpectedEof);
             }
             if !matches!(&b[0..5], b" --> ") {
-                return Err("expected time separator");
+                return Err(SrtError::ExpectedTimeSeparator { position: pos(srt) });
             }
             srt = &srt[5..];
 
             // time end
-            let end_time = parse_time(srt)?;
+            let end_time = parse_time(srt, pos(srt))?;
             srt = &srt[12..];
-            let discard = newline_discard(srt)?;
+            let discard = newline_discard(srt, pos(srt))?;
             srt = &srt[discard..];
 
             // text
@@ -183,7 +235,7 @@ impl<'a> Srt<'a> {
         Ok(Srt { subtitles })
     }
 
-    pub fn renumber(&mut self) {
+    pub fn resequence(&mut self) {
         for (i, sub) in self.subtitles.iter_mut().enumerate() {
             sub.seq = i + 1;
         }
@@ -202,10 +254,10 @@ impl<'a> Srt<'a> {
     }
 }
 
-fn parse_time(s: &str) -> Result<Timestamp, &'static str> {
+fn parse_time(s: &str, position: usize) -> Result<Timestamp> {
     let b = s.as_bytes();
     if b.len() < 12 {
-        return Err("not enough data");
+        return Err(SrtError::UnexpectedEof);
     }
 
     let mut valid = b[0].is_ascii_digit();
@@ -221,7 +273,7 @@ fn parse_time(s: &str) -> Result<Timestamp, &'static str> {
     valid &= b[10].is_ascii_digit();
     valid &= b[11].is_ascii_digit();
     if !valid {
-        return Err("invalid time");
+        return Err(SrtError::InvalidTimestamp { position });
     }
 
     Ok(Timestamp {
@@ -234,7 +286,7 @@ fn parse_time(s: &str) -> Result<Timestamp, &'static str> {
     })
 }
 
-fn newline_discard(s: &str) -> Result<usize, &'static str> {
+fn newline_discard(s: &str, position: usize) -> Result<usize> {
     let mut discard = 0;
     let mut it = s.chars();
     while let Some(c) = it.next() {
@@ -245,18 +297,26 @@ fn newline_discard(s: &str) -> Result<usize, &'static str> {
                     discard += 2;
                     break;
                 }
-                return Err("expected whitespace or newline");
+                return Err(SrtError::ExpectedNewline {
+                    position: position + discard,
+                });
             }
             '\n' => {
                 discard += 1;
                 break;
             }
             _ => {
-                return Err("expected whitespace or newline");
+                return Err(SrtError::ExpectedNewline {
+                    position: position + discard,
+                });
             }
         }
     }
     Ok(discard)
+}
+
+fn strip_prefix_bom(s: &str) -> &str {
+    s.strip_prefix("\u{feff}").unwrap_or(s)
 }
 
 #[cfg(test)]
