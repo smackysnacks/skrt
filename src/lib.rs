@@ -324,52 +324,226 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_srt() {
-        let data = r#"1
-00:00:52,119 --> 00:00:56,658
-<i>Lorum ipsum dolor sit amet,
-consectetur adipiscing elit,</i>
-sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+    fn parse_empty_input() {
+        let srt = Srt::try_parse("").unwrap();
+        assert!(srt.subtitles.is_empty());
+    }
 
-2
-01:20:59,794 --> 02:01:03,430
-Ut enim ad minim veniam, quis
-
-3
-99:01:04,566 --> 99:01:05,667
-nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-Duis aute irure dolor in reprehenderit in
-voluptate velit esse cillum
-dolore
-eu fugiat
-nulla pariatur
-.
-
-"#;
-
+    #[test]
+    fn parse_with_bom() {
+        let data = "\u{feff}1\n00:00:00,000 --> 00:00:01,000\nHello\n\n";
         let srt = Srt::try_parse(data).unwrap();
+        assert_eq!(1, srt.subtitles.len());
+    }
 
-        assert_eq!(3, srt.subtitles.len());
-        assert_eq!(
-            Timestamp {
-                hours: 1,
-                minutes: 20,
-                seconds: 59,
-                milliseconds: 794
-            },
-            srt.subtitles[1].start
+    #[test]
+    fn parse_crlf_line_endings() {
+        let data = "1\r\n00:00:00,000 --> 00:00:01,000\r\nHello\r\n\r\n";
+        let srt = Srt::try_parse(data).unwrap();
+        assert_eq!(1, srt.subtitles.len());
+        assert_eq!("Hello", srt.subtitles[0].text);
+    }
+
+    #[test]
+    fn parse_single_subtitle() {
+        let data = "1\n00:00:00,000 --> 00:00:01,000\nSingle line\n\n";
+        let srt = Srt::try_parse(data).unwrap();
+        assert_eq!(1, srt.subtitles.len());
+        assert_eq!("Single line", srt.subtitles[0].text);
+    }
+
+    #[test]
+    fn parse_multiline_text() {
+        let data = "1\n00:00:00,000 --> 00:00:01,000\nLine 1\nLine 2\nLine 3\n\n";
+        let srt = Srt::try_parse(data).unwrap();
+        assert_eq!("Line 1\nLine 2\nLine 3", srt.subtitles[0].text);
+    }
+
+    #[test]
+    fn parse_trailing_whitespace_after_timestamp() {
+        let data = "1\n00:00:00,000 --> 00:00:01,000   \nHello\n\n";
+        let srt = Srt::try_parse(data).unwrap();
+        assert_eq!(1, srt.subtitles.len());
+    }
+
+    #[test]
+    fn parse_no_trailing_newline() {
+        // File ends without double newline after last subtitle
+        let data = "1\n00:00:00,000 --> 00:00:01,000\nHello";
+        let srt = Srt::try_parse(data).unwrap();
+        assert_eq!(1, srt.subtitles.len());
+        assert_eq!("Hello", srt.subtitles[0].text);
+    }
+
+    #[test]
+    fn parse_error_invalid_sequence_number() {
+        let data = "abc\n00:00:00,000 --> 00:00:01,000\nHello\n\n";
+        let err = Srt::try_parse(data).unwrap_err();
+        assert!(matches!(err, SrtError::InvalidSequenceNumber { .. }));
+    }
+
+    #[test]
+    fn parse_error_missing_sequence_number() {
+        let data = "\n00:00:00,000 --> 00:00:01,000\nHello\n\n";
+        let err = Srt::try_parse(data).unwrap_err();
+        assert!(matches!(err, SrtError::InvalidSequenceNumber { .. }));
+    }
+
+    #[test]
+    fn parse_error_invalid_timestamp_format() {
+        let data = "1\n0:00:00,000 --> 00:00:01,000\nHello\n\n";
+        let err = Srt::try_parse(data).unwrap_err();
+        assert!(matches!(err, SrtError::InvalidTimestamp { .. }));
+    }
+
+    #[test]
+    fn parse_error_invalid_minutes() {
+        let data = "1\n00:60:00,000 --> 00:00:01,000\nHello\n\n";
+        let err = Srt::try_parse(data).unwrap_err();
+        assert!(matches!(err, SrtError::InvalidTimestamp { .. }));
+    }
+
+    #[test]
+    fn parse_error_invalid_seconds() {
+        let data = "1\n00:00:60,000 --> 00:00:01,000\nHello\n\n";
+        let err = Srt::try_parse(data).unwrap_err();
+        assert!(matches!(err, SrtError::InvalidTimestamp { .. }));
+    }
+
+    #[test]
+    fn parse_error_missing_separator() {
+        let data = "1\n00:00:00,000 -> 00:00:01,000\nHello\n\n";
+        let err = Srt::try_parse(data).unwrap_err();
+        assert!(matches!(err, SrtError::ExpectedTimeSeparator { .. }));
+    }
+
+    #[test]
+    fn parse_error_truncated_input() {
+        let data = "1\n00:00:00,000 --> 00:00";
+        let err = Srt::try_parse(data).unwrap_err();
+        assert!(matches!(err, SrtError::UnexpectedEof));
+    }
+
+    #[test]
+    fn parse_error_position_is_accurate() {
+        let data = "1\n00:00:00,000 --> 00:XX:01,000\nHello\n\n";
+        let err = Srt::try_parse(data).unwrap_err();
+        // "1\n00:00:00,000 --> " ; 19 bytes
+        assert!(matches!(err, SrtError::InvalidTimestamp { position: 19 }));
+    }
+
+    #[test]
+    fn srt_new_is_empty() {
+        let srt = Srt::new();
+        assert!(srt.subtitles.is_empty());
+    }
+
+    #[test]
+    fn srt_add_subtitle() {
+        let mut srt = Srt::new();
+        srt.add_subtitle(
+            Timestamp::from_millis(0).unwrap(),
+            Timestamp::from_millis(1000).unwrap(),
+            "Hello".into(),
         );
-        assert_eq!(
-            Timestamp {
-                hours: 2,
-                minutes: 1,
-                seconds: 3,
-                milliseconds: 430
-            },
-            srt.subtitles[1].end
+        srt.add_subtitle(
+            Timestamp::from_millis(1000).unwrap(),
+            Timestamp::from_millis(2000).unwrap(),
+            "World".into(),
         );
 
-        assert_eq!(data, srt.serialize());
+        assert_eq!(2, srt.subtitles.len());
+        assert_eq!(1, srt.subtitles[0].seq);
+        assert_eq!(2, srt.subtitles[1].seq);
+    }
+
+    #[test]
+    fn srt_serialize_roundtrip() {
+        let mut srt = Srt::new();
+        srt.add_subtitle(
+            Timestamp::from_millis(500).unwrap(),
+            Timestamp::from_millis(1500).unwrap(),
+            "Test subtitle".into(),
+        );
+
+        let serialized = srt.serialize();
+        let parsed = Srt::try_parse(&serialized).unwrap();
+
+        assert_eq!(srt, parsed);
+    }
+
+    #[test]
+    fn timestamp_zero() {
+        let ts = Timestamp::default();
+        assert_eq!(0, ts.to_millis());
+        assert_eq!("00:00:00,000", ts.to_string());
+    }
+
+    #[test]
+    fn timestamp_max_valid() {
+        let ts = Timestamp::from_millis(359_999_999).unwrap(); // 99:59:59,999
+        assert_eq!(99, ts.hours);
+        assert_eq!(59, ts.minutes);
+        assert_eq!(59, ts.seconds);
+        assert_eq!(999, ts.milliseconds);
+        assert_eq!("99:59:59,999", ts.to_string());
+    }
+
+    #[test]
+    fn timestamp_just_over_max() {
+        let result = Timestamp::from_millis(360_000_000); // 100:00:00,000
+        assert!(matches!(result, Err(SrtError::TimestampOutOfRange)));
+    }
+
+    #[test]
+    fn timestamp_one_millisecond() {
+        let ts = Timestamp::from_millis(1).unwrap();
+        assert_eq!(0, ts.hours);
+        assert_eq!(0, ts.minutes);
+        assert_eq!(0, ts.seconds);
+        assert_eq!(1, ts.milliseconds);
+    }
+
+    #[test]
+    fn timestamp_one_second() {
+        let ts = Timestamp::from_millis(1000).unwrap();
+        assert_eq!(1, ts.seconds);
+        assert_eq!(0, ts.milliseconds);
+    }
+
+    #[test]
+    fn timestamp_one_minute() {
+        let ts = Timestamp::from_millis(60_000).unwrap();
+        assert_eq!(1, ts.minutes);
+        assert_eq!(0, ts.seconds);
+    }
+
+    #[test]
+    fn timestamp_one_hour() {
+        let ts = Timestamp::from_millis(3_600_000).unwrap();
+        assert_eq!(1, ts.hours);
+        assert_eq!(0, ts.minutes);
+    }
+
+    #[test]
+    fn timestamp_shift_to_zero() {
+        let ts = Timestamp::from_millis(1000).unwrap();
+        let shifted = ts.shift_millis(-1000).unwrap();
+        assert_eq!(0, shifted.to_millis());
+    }
+
+    #[test]
+    fn timestamp_shift_negative_result() {
+        let ts = Timestamp::from_millis(1000).unwrap();
+        let err = ts.shift_millis(-1001).unwrap_err();
+        assert!(matches!(err, SrtError::NegativeTimestamp));
+    }
+
+    #[test]
+    fn timestamp_shift_overflow() {
+        let ts = Timestamp::from_millis(359_999_999).unwrap();
+        let err = ts.shift_millis(1).unwrap_err();
+        assert!(matches!(err, SrtError::TimestampOutOfRange));
     }
 
     #[test]
@@ -446,5 +620,11 @@ nulla pariatur
             "49:17:08,182",
             Timestamp::from_millis(177428182).unwrap().to_string()
         );
+    }
+
+    #[test]
+    fn error_is_error_trait() {
+        fn assert_error<E: std::error::Error>() {}
+        assert_error::<SrtError>();
     }
 }
