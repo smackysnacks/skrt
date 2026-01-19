@@ -1,0 +1,14 @@
+1
+00:00:52,119 --> 00:00:56,658
+<i>Imperial Diary. Year 10,191.
+Third comment.</i>
+
+2
+00:00:59,794 --> 00:01:03,430
+<i>The battle for Arrakis
+took everyone by surprise.</i>
+
+3
+00:01:04,566 --> 00:01:05,667
+<i>There were no witnesses.</i>
+

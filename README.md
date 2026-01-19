@@ -112,3 +112,9 @@ This crate handles common real-world variations:
 - Optional UTF-8 BOM at the start of the file
 - Trailing whitespace after timestamp lines
 - Files that don't end with a trailing blank line
+
+## Development
+
+### Fuzz Testing
+
+Install cargo-fuzz with `cargo +nightly install cargo-fuzz`, then `cd fuzz && cargo +nightly fuzz run -j $(grep -c processor /proc/cpuinfo) parse_srt`.
