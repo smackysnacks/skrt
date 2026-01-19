@@ -112,6 +112,9 @@ pub enum SrtError {
     /// maximum timestamp of `99:59:59,999` (359,999,999 milliseconds).
     TimestampOutOfRange,
 
+    /// Timestamp value is too small or large to be represented as a `i64`.
+    TimestampOverflow,
+
     /// Shift operation would result in a negative timestamp.
     ///
     /// Returned by [`Timestamp::shift_millis`] when the shift amount would
@@ -150,6 +153,7 @@ impl Display for SrtError {
             SrtError::TimestampOutOfRange => {
                 write!(f, "timestamp exceeds maximum range (99:59:59,999)")
             }
+            SrtError::TimestampOverflow => write!(f, "timestamp overflows `i64`"),
             SrtError::NegativeTimestamp => {
                 write!(f, "operation would result in negative timestamp")
             }
@@ -404,8 +408,12 @@ impl Timestamp {
     /// ```
     pub fn shift_millis(&self, millis: i64) -> Result<Timestamp> {
         let t1 = self.to_millis() as i64;
-        // TODO: check for underflow/overflow
-        let t2 = t1 + millis;
+
+        let t2 = match t1.checked_add(millis) {
+            Some(t) => t,
+            None => return Err(SrtError::TimestampOverflow),
+        };
+
         if t2 < 0 {
             return Err(SrtError::NegativeTimestamp);
         }
@@ -1060,6 +1068,7 @@ mod tests {
         assert_eq!(0, t1.shift_millis(-12345).unwrap().to_millis());
         assert!(t1.shift_millis(-12346).is_err());
         assert!(t1.shift_millis(9999999999999999).is_err());
+        assert!(t1.shift_millis(i64::MAX).is_err());
     }
 
     #[test]
