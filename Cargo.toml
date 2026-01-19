@@ -1,9 +1,10 @@
 [package]
 name = "skrt"
+description = "Lightweight, zero-copy SubRip Text (SRT) subtitle library for Rust - std only, no dependencies"
 version = "0.1.0"
 edition = "2024"
 authors = ["Mack Stump <mack@mackstump.com>"]
-description = "Lightweight, zero-copy SubRip Text (SRT) subtitle library for Rust - std only, no dependencies"
+rust-version = "1.85.1"
 license = "MIT"
 
 [dependencies]

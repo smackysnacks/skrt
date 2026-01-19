@@ -4,9 +4,9 @@ A fast, zero-copy parser and serializer for SubRip Text (SRT) subtitle files in 
 
 ## Features
 
-- Zero-copy parsing. Subtitle text borrows directly from the input string when possible
-- Flexible input handling. Supports LF and CRLF line endings, optional UTF-8 BOM, trailing whitespace, and missing final newlines
-- Timestamp manipulation. Shift timestamps forward or backward with millisecond precision
+- Zero-copy parsing - Subtitle text borrows directly from the input string when possible
+- Flexible input handling - Supports LF and CRLF line endings, optional UTF-8 BOM, trailing whitespace, and missing final newlines
+- Shift timestamps forward or backward with millisecond precision
 - Create subtitle files programmatically
 - Detailed error reporting
 

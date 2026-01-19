@@ -50,6 +50,8 @@
 //! - `SS` = seconds (00-59)
 //! - `mmm` = milliseconds (000-999)
 
+#![warn(rust_2018_idioms)]
+
 use std::{
     borrow::Cow,
     cmp::Ordering,
