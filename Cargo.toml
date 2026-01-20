@@ -5,6 +5,9 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Mack Stump <mack@mackstump.com>"]
 rust-version = "1.85.1"
+homepage = "https://github.com/smackysnacks/skrt"
+repository = "https://github.com/smackysnacks/skrt"
+documentation = "https://docs.rs/skrt/"
 license = "MIT"
 
 [dependencies]
