@@ -472,7 +472,7 @@ impl<'a> Srt<'a> {
     /// let texts: Vec<_> = srt.iter().map(|s| s.text()).collect();
     /// assert_eq!(vec!["Hello", "World"], texts);
     /// ```
-    pub fn iter(&self) -> impl Iterator<Item = &Subtitle<'a>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Subtitle<'a>> {
         self.subtitles.iter()
     }
 
@@ -497,7 +497,7 @@ impl<'a> Srt<'a> {
     ///
     /// assert_eq!(5000, srt.subtitles()[0].start().to_millis());
     /// ```
-    pub fn iter_mut<'b>(&'b mut self) -> impl Iterator<Item = &'b mut Subtitle<'a>> {
+    pub fn iter_mut<'b>(&'b mut self) -> std::slice::IterMut<'b, Subtitle<'a>> {
         self.subtitles.iter_mut()
     }
 
@@ -733,6 +733,24 @@ impl<'a> IntoIterator for Srt<'a> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.subtitles.into_iter()
+    }
+}
+
+impl<'a, 'b> IntoIterator for &'b Srt<'a> {
+    type Item = &'b Subtitle<'a>;
+    type IntoIter = std::slice::Iter<'b, Subtitle<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, 'b> IntoIterator for &'b mut Srt<'a> {
+    type Item = &'b mut Subtitle<'a>;
+    type IntoIter = std::slice::IterMut<'b, Subtitle<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 
