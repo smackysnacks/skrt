@@ -9,5 +9,7 @@ homepage = "https://github.com/smackysnacks/skrt"
 repository = "https://github.com/smackysnacks/skrt"
 documentation = "https://docs.rs/skrt/"
 license = "MIT"
+categories = ["parsing"]
+keywords = ["srt", "subtitle", "std-only"]
 
 [dependencies]
