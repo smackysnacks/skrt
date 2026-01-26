@@ -1,5 +1,9 @@
 # skrt
 
+[![Crates.io](https://img.shields.io/crates/v/skrt.svg)](https://crates.io/crates/skrt)
+[![Documentation](https://docs.rs/skrt/badge.svg)](https://docs.rs/skrt)
+[![License](https://img.shields.io/crates/l/skrt.svg)](https://github.com/smackysnacks/skrt#license)
+
 A fast, zero-copy parser and serializer for SubRip Text (SRT) subtitle files in Rust.
 
 ## Features
