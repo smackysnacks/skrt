@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - crates.io `categories` and `keywords` in the package metadata.
 
+### Changed
+
+- Lowered the minimum supported Rust version (MSRV) from 1.85.1 to 1.85.0.
+
 ## [0.1.1] - 2026-01-20
 
 ### Added
