@@ -1,6 +1,7 @@
 # skrt
 
 [![Crates.io](https://img.shields.io/crates/v/skrt.svg)](https://crates.io/crates/skrt)
+[![Crates.io Total Downloads](https://img.shields.io/crates/d/skrt)](https://crates.io/crates/skrt)
 [![Documentation](https://docs.rs/skrt/badge.svg)](https://docs.rs/skrt)
 [![License](https://img.shields.io/crates/l/skrt.svg)](https://github.com/smackysnacks/skrt#license)
 
